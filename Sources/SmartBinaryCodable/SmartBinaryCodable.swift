@@ -47,7 +47,7 @@ import Foundation
 // MARK: - Utilities & Helpers
 
 /// Protocol for types that can encode length information for strings and data.
-protocol BinaryEncodableType {
+/*protocol BinaryEncodableType {
     static func encodeStringLength(
         value: String, into data: inout Data, order: ByteOrder,
         encoding: String.Encoding)
@@ -87,7 +87,7 @@ extension UInt8: BinaryEncodableType {}
 extension UInt16: BinaryEncodableType {}
 extension UInt32: BinaryEncodableType {}
 extension UInt64: BinaryEncodableType {}
-extension Int: BinaryEncodableType {}
+extension Int: BinaryEncodableType {}*/
 
 // MARK: - Public API: SmartBinaryEncoder
 
@@ -96,7 +96,7 @@ extension Int: BinaryEncodableType {}
 /// Encodes Swift types to binary data with automatic support for size-prefixed strings and data fields.
 ///
 /// ## Configuration
-/// - **byteOrder**: Controls endianness of multi-byte values (default: little-endian)
+/// - **order**: Controls endianness of multi-byte values (default: little-endian)
 /// - **sizeSuffix**: Suffix for size field names (default: "Size")
 /// - **cstrSuffix**: Suffix for C-string field names (default: "Cstr")
 /// - **encoding**: String encoding (default: `.utf8`)
@@ -119,7 +119,7 @@ public class SmartBinaryEncoder {
     private var encoderState: EncoderState
 
     /// The byte order used for encoding multi-byte values.
-    public let byteOrder: ByteOrder
+    public let order: ByteOrder
 
     /// The suffix used to identify size fields (default: "Size").
     public let sizeSuffix: String
@@ -136,20 +136,20 @@ public class SmartBinaryEncoder {
     /// Initialize an encoder with specified configuration.
     ///
     /// - Parameters:
-    ///   - byteOrder: Byte order for multi-byte values (default: `.littleEndian`)
+    ///   - order: Byte order for multi-byte values (default: `.littleEndian`)
     ///   - sizeSuffix: Suffix for size field names (default: `"Size"`)
     ///   - cstrSuffix: Suffix for C-string field names (default: `"Cstr"`)
     ///   - encoding: String encoding (default: `.utf8`)
     ///   - defaultSizeType: Default size type for encoding multi-byte values (default: `UInt32.self`)
     public init(
-        byteOrder: ByteOrderOption = .littleEndian,
+        order: ByteOrderOption = .littleEndian,
         sizeSuffix: String = "Size",
         cstrSuffix: String = "Cstr",
         encoding: String.Encoding = .utf8,
         defaultSizeType: any FixedWidthInteger.Type = UInt32.self
 
     ) {
-        self.byteOrder = byteOrder.toByteOrder()
+        self.order = order.toByteOrder()
         self.sizeSuffix = sizeSuffix
         self.cstrSuffix = cstrSuffix
         self.encoding = encoding
@@ -165,7 +165,7 @@ public class SmartBinaryEncoder {
     public func encode<T: Encodable>(_ value: T) throws -> Data {
         let state = EncoderState()
         let encoder = EncoderImpl(
-            state: state, byteOrder: byteOrder, sizeSuffix: sizeSuffix, cstrSuffix: cstrSuffix,
+            state: state, order: order, sizeSuffix: sizeSuffix, cstrSuffix: cstrSuffix,
             encoding: encoding, defaultSizeType: defaultSizeType)
         try value.encode(to: encoder)
         return state.data
@@ -179,7 +179,7 @@ public class SmartBinaryEncoder {
     /// - Throws: `EncodingError` if encoding fails
     public func encodeAndAppend<T: Encodable>(_ value: T) throws {
         let encoder = EncoderImpl(
-            state: encoderState, byteOrder: byteOrder, sizeSuffix: sizeSuffix,
+            state: encoderState, order: order, sizeSuffix: sizeSuffix,
             cstrSuffix: cstrSuffix, encoding: encoding, defaultSizeType: defaultSizeType)
         try value.encode(to: encoder)
     }
@@ -218,7 +218,7 @@ private class EncoderState {
 private class EncoderImpl: Encoder {
     let state: EncoderState
     var userInfo: [CodingUserInfoKey: Any] = [:]
-    let byteOrder: ByteOrder
+    let order: ByteOrder
     let sizeSuffix: String
     let cstrSuffix: String
     let encoding: String.Encoding
@@ -240,11 +240,11 @@ private class EncoderImpl: Encoder {
     }
 
     init(
-        state: EncoderState, byteOrder: ByteOrder, sizeSuffix: String, cstrSuffix: String,
+        state: EncoderState, order: ByteOrder, sizeSuffix: String, cstrSuffix: String,
         encoding: String.Encoding, defaultSizeType: any FixedWidthInteger.Type
     ) {
         self.state = state
-        self.byteOrder = byteOrder
+        self.order = order
         self.sizeSuffix = sizeSuffix
         self.cstrSuffix = cstrSuffix
         self.encoding = encoding
@@ -263,6 +263,14 @@ private class EncoderImpl: Encoder {
     func singleValueContainer() -> SingleValueEncodingContainer {
         return SingleValueEncodingContainerImpl(encoder: self)
     }
+
+    fileprivate func encodeInteger<T: FixedWidthInteger>(_ value: T) {
+        SmartBinaryIO.writeInteger(value, &data, order)
+    }
+
+    fileprivate func encodeFloat<T: BinaryFloatingPoint>(_ value: T) {
+        SmartBinaryIO.writeFloat(value, &data, order)
+    }
 }
 
 // MARK: Keyed Container
@@ -280,7 +288,7 @@ private struct KeyedEncodingContainerImpl<Key: CodingKey>: KeyedEncodingContaine
         if let dataValue = value as? Data {
             if let sizeType = encoder.sizeFieldType[fieldName] as? any BinaryEncodableType.Type {
                 sizeType.encodeDataLength(
-                    value: dataValue, into: &encoder.data, order: encoder.byteOrder)
+                    value: dataValue, into: &encoder.data, order: encoder.order)
             }
             encoder.data.append(dataValue)
             return
@@ -345,16 +353,23 @@ private struct SingleValueEncodingContainerImpl: SingleValueEncodingContainer {
     let encoder: EncoderImpl
     var codingPath: [CodingKey] { encoder.codingPath }
 
+    func corrupted(_ text: String) -> DecodingError {
+        return DecodingError.dataCorrupted(
+            .init(codingPath: codingPath, debugDescription: text))
+    }
+
     mutating func encodeNil() throws {}
 
     mutating func encode<T: Encodable>(_ value: T) throws {
         let fieldName = codingPath.last?.stringValue ?? ""
+
         switch value {
 
         case let v as Bool:
-            encoder.data.append(v ? 1 : 0)
+            Bool.write(v, into: &encoder.data)
+        //encoder.data.append(v ? 1 : 0)
         case let v as any FixedWidthInteger:
-            if keyEndsWithSizeSuffix(fieldName) {
+            if fieldName.hasSuffix(encoder.sizeSuffix) {
                 let baseName = String(fieldName.dropLast(encoder.sizeSuffix.count))
                 encoder.sizeFieldType[baseName] = type(of: v)
             } else {
@@ -367,54 +382,34 @@ private struct SingleValueEncodingContainerImpl: SingleValueEncodingContainer {
                 return
             }
             if fieldName.hasSuffix(encoder.cstrSuffix) {
-                if let encodedData = v.data(using: encoder.encoding) {
-                    encoder.data.append(encodedData)
-                }
-                encoder.data.append(0)
+                SmartBinaryIO.writeStringData(
+                    v + "\0", into: &encoder.data,
+                    order: encoder.order, encoding: encoder.encoding
+                )
+                //if let encodedData = v.data(using: encoder.encoding) {
+                //    encoder.data.append(encodedData)
+                //}
+                //encoder.data.append(0)
                 return
             }
             let sizeType = encoder.sizeFieldType[fieldName] ?? encoder.defaultSizeType
-            let encodedData = v.data(using: encoder.encoding) ?? Data()
-            sizeType.encodeStringLength(
-                value: v, into: &encoder.data, order: encoder.byteOrder,
-                encoding: encoder.encoding)
-            encoder.data.append(encodedData)
+            SmartBinaryIO.writeString(
+                sizeType, v, into: &encoder.data,
+                order: encoder.order, encoding: encoder.encoding
+            )
 
         case let v as Data:
             if fieldName.hasSuffix(encoder.sizeSuffix) {
                 return
             }
             let sizeType = encoder.sizeFieldType[fieldName] ?? encoder.defaultSizeType
-            sizeType.encodeDataLength(value: v, into: &encoder.data, order: encoder.byteOrder)
-            encoder.data.append(v)
+            SmartBinaryIO.writeData(sizeType, v, into: &encoder.data, order: encoder.order)
 
         default:
             try value.encode(to: encoder)
         }
     }
 
-    private func keyEndsWithSizeSuffix(_ key: String) -> Bool {
-        return key.hasSuffix(encoder.sizeSuffix)
-    }
-}
-
-// MARK: Encoder Helpers
-
-extension EncoderImpl {
-    fileprivate func encodeInteger<T: FixedWidthInteger>(_ value: T) {
-        var encoded = byteOrder == .bigEndian ? value.bigEndian : value.littleEndian
-        withUnsafeBytes(of: &encoded) { data.append(contentsOf: $0) }
-    }
-
-    fileprivate func encodeFloat<T: BinaryFloatingPoint>(_ value: T) {
-        var encoded = value
-        let bytes = withUnsafeBytes(of: &encoded) { Data($0) }
-        if byteOrder == .bigEndian {
-            data.append(Data(bytes.reversed()))
-        } else {
-            data.append(bytes)
-        }
-    }
 }
 
 // MARK: - Public API: SmartBinaryDecoder
@@ -425,7 +420,7 @@ extension EncoderImpl {
 ///
 /// ## Configuration
 /// - **data**: The binary data to decode
-/// - **byteOrder**: Must match the byte order used during encoding (default: little-endian)
+/// - **order**: Must match the byte order used during encoding (default: little-endian)
 /// - **sizeSuffix**: Must match the encoder's sizeSuffix (default: "Size")
 /// - **cstrSuffix**: Must match the encoder's cstrSuffix (default: "Cstr")
 /// - **encoding**: Must match the encoder's encoding (default: `.utf8`)
@@ -446,7 +441,7 @@ public class SmartBinaryDecoder {
     private(set) var offset: Int = 0
 
     /// The byte order used during decoding.
-    public let byteOrder: ByteOrder
+    public let order: ByteOrder
 
     /// The suffix used to identify size fields.
     public let sizeSuffix: String
@@ -464,21 +459,21 @@ public class SmartBinaryDecoder {
     ///
     /// - Parameters:
     ///   - data: The binary data to decode
-    ///   - byteOrder: Byte order (must match encoder, default: `.littleEndian`)
+    ///   - order: Byte order (must match encoder, default: `.littleEndian`)
     ///   - sizeSuffix: Size field suffix (must match encoder, default: `"Size"`)
     ///   - cstrSuffix: C-string field suffix (must match encoder, default: `"Cstr"`)
     ///   - encoding: String encoding (must match encoder, default: `.utf8`)
     ///   - defaultSizeType: Default size type for encoding multi-byte values (default: `UInt32.self`)
     public init(
         data: Data,
-        byteOrder: ByteOrderOption = .littleEndian,
+        order: ByteOrderOption = .littleEndian,
         sizeSuffix: String = "Size",
         cstrSuffix: String = "Cstr",
         encoding: String.Encoding = .utf8,
         defaultSizeType: any FixedWidthInteger.Type = UInt32.self
     ) {
         self.data = data
-        self.byteOrder = byteOrder.toByteOrder()
+        self.order = order.toByteOrder()
         self.sizeSuffix = sizeSuffix
         self.cstrSuffix = cstrSuffix
         self.encoding = encoding
@@ -492,12 +487,18 @@ public class SmartBinaryDecoder {
     /// - Throws: `DecodingError` if the data is malformed or incomplete
     public func decode<T: Decodable>(_ type: T.Type) throws -> T {
         let state = DecoderState(
-            data: data, offset: offset, byteOrder: byteOrder, sizeSuffix: sizeSuffix,
+            data: data, offset: offset, order: order, sizeSuffix: sizeSuffix,
             cstrSuffix: cstrSuffix, encoding: encoding, defaultSizeType: defaultSizeType)
         let decoder = DecoderImpl(state: state)
         let result = try T(from: decoder)
         offset = state.offset
         return result
+    }
+
+    var bytesRemaining: Int {
+        // data.count represents the total length of the slice/buffer
+        // offset represents how many bytes we've consumed
+        return Swift.max(0, data.count - offset)
     }
 }
 
@@ -508,7 +509,7 @@ public class SmartBinaryDecoder {
 private class DecoderState {
     var data: Data
     var offset: Int
-    let byteOrder: ByteOrder
+    let order: ByteOrder
     let sizeSuffix: String
     let cstrSuffix: String
     let encoding: String.Encoding
@@ -516,12 +517,12 @@ private class DecoderState {
     var sizeFieldType: [String: any FixedWidthInteger.Type] = [:]
 
     init(
-        data: Data, offset: Int, byteOrder: ByteOrder, sizeSuffix: String, cstrSuffix: String,
+        data: Data, offset: Int, order: ByteOrder, sizeSuffix: String, cstrSuffix: String,
         encoding: String.Encoding, defaultSizeType: any FixedWidthInteger.Type
     ) {
         self.data = data
         self.offset = offset
-        self.byteOrder = byteOrder
+        self.order = order
         self.sizeSuffix = sizeSuffix
         self.cstrSuffix = cstrSuffix
         self.encoding = encoding
@@ -541,7 +542,7 @@ private class DecoderImpl: Decoder {
         get { state.offset }
         set { state.offset = newValue }
     }
-    var byteOrder: ByteOrder { state.byteOrder }
+    var order: ByteOrder { state.order }
     var sizeSuffix: String { state.sizeSuffix }
     var cstrSuffix: String { state.cstrSuffix }
     var encoding: String.Encoding { state.encoding }
@@ -564,6 +565,15 @@ private class DecoderImpl: Decoder {
     func singleValueContainer() throws -> SingleValueDecodingContainer {
         return SingleValueDecodingContainerImpl(decoder: self)
     }
+
+    public func decodeInteger<T: FixedWidthInteger>(_ type: T.Type) throws -> T {
+        return try SmartBinaryIO.readInteger(type, data, offset: &offset, order: order)
+
+    }
+    public func decodeFloat<T: BinaryFloatingPoint>(_ type: T.Type) throws -> T {
+        return try SmartBinaryIO.readFloat(type, data, offset: &offset, order: order)
+    }
+
 }
 
 // MARK: Keyed Container
@@ -642,14 +652,22 @@ private struct SingleValueDecodingContainerImpl: SingleValueDecodingContainer {
 
     func decodeNil() -> Bool { false }
 
+    func corrupted(_ text: String) -> DecodingError {
+        return DecodingError.dataCorrupted(
+            .init(codingPath: codingPath, debugDescription: text))
+    }
+
     func decode<T: Decodable>(_ type: T.Type) throws -> T {
         let fieldName = codingPath.last?.stringValue ?? ""
 
+        guard decoder.offset < decoder.data.count else {
+            throw corrupted("Insufficient data")
+        }
+
         if let intType = type as? any FixedWidthInteger.Type {
             let value = try decoder.decodeInteger(intType)
-            if keyEndsWithSizeSuffix(fieldName) {
-                let baseName = String(fieldName.dropLast(decoder.sizeSuffix.count))
-                decoder.sizeFieldValue[baseName] = value
+            if fieldName.hasSuffix(decoder.sizeSuffix) {
+                decoder.sizeFieldValue[fieldName.removeSuffix(decoder.sizeSuffix)] = value
             }
             return value as! T
         }
@@ -661,55 +679,32 @@ private struct SingleValueDecodingContainerImpl: SingleValueDecodingContainer {
             return try decoder.decodeFloat(Double.self) as! T
         }
         if type == Bool.self {
-            guard decoder.offset < decoder.data.count else {
-                throw DecodingError.dataCorrupted(
-                    .init(codingPath: codingPath, debugDescription: "Insufficient data"))
-            }
-            let currentPos = decoder.data.startIndex + decoder.offset
-            let value = decoder.data[currentPos] != 0
-            decoder.offset += 1
+            let value = try Bool.read(decoder.data, offset: &decoder.offset)
             return value as! T
         }
-        if type == String.self {
-            var currentPos = decoder.data.startIndex + decoder.offset
-            var endPos: Int
 
-            // Check endPos
+        if type == String.self {
+            var count: Int = 0
+
+            // Search for \0
             if fieldName.hasSuffix(decoder.cstrSuffix) {
+                let currentPos = decoder.data.startIndex + decoder.offset
                 guard let termPos = decoder.data[currentPos...].firstIndex(of: 0) else {
-                    throw DecodingError.dataCorrupted(
-                        .init(
-                            codingPath: codingPath,
-                            debugDescription: "Null terminator not found for C-style string"))
+                    throw corrupted("Null terminator not found for C-style string")
                 }
-                endPos = termPos
+                count = termPos - currentPos
+
             } else {
-                if let sizeValue = decoder.sizeFieldValue[fieldName] {
-                    endPos = currentPos + Int(sizeValue)
-                } else {
-                    let value = try decoder.decodeInteger(decoder.defaultSizeType)
-                    currentPos += decoder.defaultSizeType.sizeType
-                    endPos = currentPos + Int(value)
-                }
-                guard endPos <= decoder.data.endIndex else {
-                    throw DecodingError.dataCorrupted(
-                        .init(
-                            codingPath: codingPath,
-                            debugDescription:
-                                "Insufficient data \(fieldName) \(decoder.offset) \(decoder.sizeFieldValue) \(decoder.data.count)"
-                        ))
-                }
+                count = try getFieldSize(fieldName)
             }
 
             // Extract string data
-            let stringData = decoder.data.subdata(in: currentPos..<endPos)
-            guard let string = String(data: stringData, encoding: decoder.encoding) else {
-                throw DecodingError.dataCorrupted(
-                    .init(codingPath: codingPath, debugDescription: "Invalid string encoding"))
+            let data = try SmartBinaryIO.readData(
+                Int(count), decoder.data, &decoder.offset)
+            guard let string = String(data: data, encoding: decoder.encoding) else {
+                throw corrupted("Invalid string encoding")
             }
 
-            // Update offset
-            decoder.offset += decoder.data.distance(from: currentPos, to: endPos)
             if fieldName.hasSuffix(decoder.cstrSuffix) {
                 decoder.offset += 1
             }
@@ -718,75 +713,20 @@ private struct SingleValueDecodingContainerImpl: SingleValueDecodingContainer {
 
         }
         if type == Data.self {
-            var currentPos = decoder.data.startIndex + decoder.offset
-            var endPos: Int
-            if let sizeValue = decoder.sizeFieldValue[fieldName] {
-                endPos = currentPos + Int(sizeValue)
-            } else {
-                let sizeValue = try decoder.decodeInteger(decoder.defaultSizeType)
-                currentPos += decoder.defaultSizeType.sizeType
-                endPos = currentPos + Int(sizeValue)
-            }
-            guard endPos <= decoder.data.endIndex else {
-                throw DecodingError.dataCorrupted(
-                    .init(codingPath: codingPath, debugDescription: "Insufficient data"))
-            }
-            let data = decoder.data.subdata(in: currentPos..<endPos)
-            decoder.offset += decoder.data.distance(from: currentPos, to: endPos)
+            let count = try getFieldSize(fieldName)
+            let data = try SmartBinaryIO.readData(
+                Int(count), decoder.data, &decoder.offset)
             return data as! T
         }
         return try T(from: decoder)
     }
 
-    private func keyEndsWithSizeSuffix(_ key: String) -> Bool {
-        return key.hasSuffix(decoder.sizeSuffix)
-    }
-}
-
-// MARK: Decoder Helpers
-
-extension DecoderImpl {
-    fileprivate func decodeInteger<T: FixedWidthInteger>(_ type: T.Type) throws -> T {
-        let size = MemoryLayout<T>.size
-        let currentPos = data.startIndex + offset
-        guard currentPos + size <= data.endIndex else {
-            throw DecodingError.dataCorrupted(
-                .init(codingPath: [], debugDescription: "Insufficient data"))
-        }
-
-        let value: T
-        if size == 1 {
-            if type == UInt8.self {
-                value = T(data[currentPos])
-            } else {
-                value = T(truncatingIfNeeded: UInt8(data[currentPos]))
-            }
+    private func getFieldSize(_ fieldName: String) throws -> Int {
+        if let sizeValue = decoder.sizeFieldValue[fieldName] {
+            return Int(sizeValue)
         } else {
-            let raw = data[currentPos..<currentPos + size].withUnsafeBytes {
-                $0.loadUnaligned(as: T.self)
-            }
-            value = byteOrder == .bigEndian ? raw.bigEndian : raw.littleEndian
-        }
-        offset += size
-        return value
-    }
-    fileprivate func decodeFloat<T: BinaryFloatingPoint>(_ type: T.Type) throws -> T {
-        let size = MemoryLayout<T>.size
-        let currentPos = data.startIndex + offset
-        guard currentPos + size <= data.endIndex else {
-            throw DecodingError.dataCorrupted(
-                .init(codingPath: [], debugDescription: "Insufficient data"))
-        }
-
-        if T.self == Float.self {
-            let i = try decodeInteger(UInt32.self)
-            return Float(bitPattern: i) as! T
-        } else if T.self == Double.self {
-            let i = try decodeInteger(UInt64.self)
-            return Double(bitPattern: i) as! T
-        } else {
-            throw DecodingError.dataCorrupted(
-                .init(codingPath: [], debugDescription: "Unsupported float size"))
+            let sizeValue = try decoder.decodeInteger(decoder.defaultSizeType)
+            return Int(sizeValue)
         }
     }
 

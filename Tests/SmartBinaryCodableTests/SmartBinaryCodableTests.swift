@@ -1,6 +1,6 @@
 import Foundation
-import XCTest
 import Testing
+import XCTest
 
 @testable import SmartBinaryCodable
 
@@ -118,16 +118,34 @@ public struct SmartCString: Codable, Equatable {
     public var nameCstr: String
 }
 
+public struct Version: Codable, Equatable {
+    public var major: UInt16
+    public var minor: UInt8
+    public var patch: UInt8
+}
+
+public struct Server: Codable, Equatable {
+    public var id: UInt32
+    public var name: String
+    public var version: Version
+}
+
+public struct Cluster: Codable, Equatable {
+    public var id: UInt32
+    public var name: String
+    public var servers: [Server]
+}
+
 class SmartBinaryCoderTests: XCTestCase {
 
     func testRoundTripSimpleStruct() throws {
         let original = SmartSimpleStruct(
             field1: 0x42, field2: 0x1234, field3: 0x5678_90AB, field4: 0x1234_5678_90AB_CDEF)
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartSimpleStruct.self)
 
         XCTAssertEqual(original, decoded)
@@ -137,10 +155,10 @@ class SmartBinaryCoderTests: XCTestCase {
         let original = SmartSignedStruct(
             int8Val: -42, int16Val: -1000, int32Val: -100000, int64Val: -10_000_000_000)
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartSignedStruct.self)
 
         XCTAssertEqual(original, decoded)
@@ -148,11 +166,10 @@ class SmartBinaryCoderTests: XCTestCase {
 
     func testRoundTripFloatingPointStruct() throws {
         let original = SmartFloatingPointStruct(floatVal: 3.14, doubleVal: 3.141592653589793)
-
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartFloatingPointStruct.self)
 
         XCTAssertEqual(original.floatVal, decoded.floatVal, accuracy: 0.001)
@@ -163,10 +180,10 @@ class SmartBinaryCoderTests: XCTestCase {
         let simple = SmartSimpleStruct(field1: 0x11, field2: 0x2222, field3: 0x3333_3333)
         let original = SmartNestedStruct(simple: simple, id: 0x4444_4444)
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartNestedStruct.self)
 
         XCTAssertEqual(original, decoded)
@@ -174,25 +191,27 @@ class SmartBinaryCoderTests: XCTestCase {
 
     func testRoundTripStringStruct() throws {
         let original = SmartStringStruct(strSize: 0, str: "Hello, World!")
-
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartStringStruct.self)
+
+        //XCTAssertEqual(original.str, original.str)
 
         //XCTAssertEqual(original, decoded)
         XCTAssertEqual(original.str, decoded.str)
         XCTAssertEqual(decoded.strSize, UInt8(original.str.utf8.count))
+
     }
 
     func testRoundTripDataStruct() throws {
         let original = SmartDataStruct(data: "Hello, World!".data(using: .utf8)!)
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartDataStruct.self)
 
         XCTAssertEqual(original, decoded)
@@ -203,10 +222,10 @@ class SmartBinaryCoderTests: XCTestCase {
     func testRoundTripStringStructSizedUInt8() throws {
         let original = SmartStringSizedUInt8(stringSize: 0, string: "Test String")
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartStringSizedUInt8.self)
 
         XCTAssertEqual(decoded.string, original.string)
@@ -216,10 +235,10 @@ class SmartBinaryCoderTests: XCTestCase {
     func testRoundTripStringStructSizedUInt16() throws {
         let original = SmartStringSizedUInt16(stringSize: 0, string: "Another Test String")
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartStringSizedUInt16.self)
 
         XCTAssertEqual(decoded.string, original.string)
@@ -230,10 +249,10 @@ class SmartBinaryCoderTests: XCTestCase {
         let original = SmartStringSizedUInt32(
             stringSize: 0, string: "A much longer string to test with a 32-bit size")
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartStringSizedUInt32.self)
 
         XCTAssertEqual(decoded.string, original.string)
@@ -244,10 +263,10 @@ class SmartBinaryCoderTests: XCTestCase {
         let original = SmartStringSizedUInt64(
             stringSize: 0, string: "A string with a 64-bit size field, which is quite large")
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartStringSizedUInt64.self)
 
         XCTAssertEqual(decoded.string, original.string)
@@ -258,10 +277,10 @@ class SmartBinaryCoderTests: XCTestCase {
         let originalData = "Some raw data".data(using: .utf8)!
         let original = SmartDataSizedUInt32(dataSize: 0, data: originalData)
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartDataSizedUInt32.self)
 
         XCTAssertEqual(decoded.data, original.data)
@@ -272,10 +291,10 @@ class SmartBinaryCoderTests: XCTestCase {
         let original = SmartStringNoSize(
             string: "A much longer string to test with a 32-bit size")
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartStringNoSize.self)
 
         XCTAssertEqual(decoded.string, original.string)
@@ -285,14 +304,28 @@ class SmartBinaryCoderTests: XCTestCase {
     func testRoundTripCString() throws {
         let original = SmartCString(nameCstr: "terminator")
 
-        let encoder = SmartBinaryEncoder(byteOrder: .littleEndian)
+        let encoder = SmartBinaryEncoder(order: .littleEndian)
         let data = try encoder.encode(original)
 
-        let decoder = SmartBinaryDecoder(data: data, byteOrder: .littleEndian)
+        let decoder = SmartBinaryDecoder(data: data, order: .littleEndian)
         let decoded = try decoder.decode(SmartCString.self)
 
         XCTAssertEqual(original, decoded)
         // Check for null terminator
         XCTAssertEqual(data.last, 0)
+    }
+
+    func testRoundTripNested() throws {
+        let server1 = Server(id: 1, name: "server1", version: Version(major: 1, minor: 0, patch: 0))
+        let server2 = Server(id: 2, name: "server2", version: Version(major: 2, minor: 0, patch: 0))
+        let original = Cluster(id: 1, name: "cluster", servers: [server1, server2])
+        let encoder = SmartBinaryEncoder(order: .bigEndian)
+        let data = try encoder.encode(original)
+
+        let decoder = SmartBinaryDecoder(data: data, order: .bigEndian)
+        let decoded = try decoder.decode(Cluster.self)
+
+        XCTAssertEqual(original, decoded)
+        // Check for null terminator
     }
 }
